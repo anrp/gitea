@@ -358,6 +358,8 @@ func StoreMissingLfsObjectsInRepository(ctx context.Context, repo *models.Reposi
 	}
 
 	var batch []lfs.Pointer
+	var errBatch []lfs.Pointer
+
 	for pointerBlob := range pointerChan {
 		meta, err := repo.GetLFSMetaObjectByOid(pointerBlob.Oid)
 		if err != nil && err != models.ErrLFSObjectNotExist {
@@ -393,7 +395,9 @@ func StoreMissingLfsObjectsInRepository(ctx context.Context, repo *models.Reposi
 			batch = append(batch, pointerBlob.Pointer)
 			if len(batch) >= client.BatchSize() {
 				if err := downloadObjects(batch); err != nil {
-					return err
+					for i := range batch {
+						errBatch = append(errBatch, batch[i])
+					}
 				}
 				batch = nil
 			}
@@ -401,8 +405,17 @@ func StoreMissingLfsObjectsInRepository(ctx context.Context, repo *models.Reposi
 	}
 	if len(batch) > 0 {
 		if err := downloadObjects(batch); err != nil {
-			return err
+			for i := range batch {
+				errBatch = append(errBatch, batch[i])
+			}
 		}
+	}
+
+	for i := range errBatch {
+		log.Info("Single downloading %v", errBatch[i])
+		batch = nil
+		batch = append(batch, errBatch[i])
+		downloadObjects(batch)
 	}
 
 	err, has := <-errChan

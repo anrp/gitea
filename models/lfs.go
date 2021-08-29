@@ -8,6 +8,7 @@ import (
 	"errors"
 
 	"code.gitea.io/gitea/modules/lfs"
+	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/timeutil"
 
 	"xorm.io/builder"
@@ -139,7 +140,8 @@ func LFSObjectAccessible(user *User, oid string) (bool, error) {
 }
 
 // LFSAutoAssociate auto associates accessible LFSMetaObjects
-func LFSAutoAssociate(metas []*LFSMetaObject, user *User, repoID int64) error {
+func LFSAutoAssociateInner(metas []*LFSMetaObject, user *User, repoID int64) error {
+	log.Trace("Associating %v objects", len(metas))
 	sess := x.NewSession()
 	defer sess.Close()
 	if err := sess.Begin(); err != nil {
@@ -171,6 +173,25 @@ func LFSAutoAssociate(metas []*LFSMetaObject, user *User, repoID int64) error {
 	}
 
 	return sess.Commit()
+}
+
+func LFSAutoAssociate(metas []*LFSMetaObject, user *User, repoID int64) error {
+	var metasWindow []*LFSMetaObject
+	for i := range metas {
+		metasWindow = append(metasWindow, metas[i])
+		if len(metasWindow) >= 1000 {
+			if err := LFSAutoAssociateInner(metasWindow, user, repoID); err != nil {
+				return err
+			}
+			metasWindow = nil
+		}
+	}
+
+	if len(metasWindow) > 0 {
+		return LFSAutoAssociateInner(metasWindow, user, repoID)
+	} else {
+		return nil
+	}
 }
 
 // IterateLFS iterates lfs object
